@@ -1,0 +1,19 @@
+# Keep the build context small and never ship secrets or local state into images.
+**/node_modules
+**/dist
+**/coverage
+**/*.tsbuildinfo
+client/public/models
+.git
+.github
+.claude
+.vscode
+.idea
+.env
+.env.*
+!.env.example
+nginx/certs
+docs
+*.md
+!README.md
+secrets

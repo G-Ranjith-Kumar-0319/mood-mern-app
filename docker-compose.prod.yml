@@ -1,0 +1,173 @@
+# Production-style stack (single host, for learning/staging):
+#
+#   Internet ──HTTPS──► nginx (TLS termination, static app, load balancer)
+#                         └──► api × 3 (stateless Node replicas)
+#                                └──► MongoDB replica set rs0: mongo1 (preferred primary), mongo2, mongo3
+#
+# Differences from docker-compose.yml:
+#   - TLS on 443 (HTTP 80 redirects), HSTS
+#   - 3-member replica set with keyFile-based internal auth + user authentication
+#   - the API connects as a least-privilege user (readWrite on one database)
+#   - nothing but Nginx is published to the host
+#
+# Usage:
+#   npm run setup:prod                                   # secrets, keyfile, self-signed cert
+#   docker compose -f docker-compose.prod.yml up --build -d
+#   open https://localhost   (accept the self-signed certificate warning)
+#
+# A real deployment would run each mongod on a separate machine/zone — three
+# members on one host give redundancy against process failure only.
+
+name: expression-detector-prod
+
+x-mongo-member: &mongo-member
+  image: mongo:8.0
+  # Copy the keyfile with the strict permissions mongod requires (bind-mounted
+  # files keep host permissions, which mongod rejects), then start mongod.
+  entrypoint: ['bash', '-c']
+  command:
+    - |
+      install -m 400 -o mongodb -g mongodb /run/secrets/mongo_keyfile /etc/mongo-keyfile
+      exec docker-entrypoint.sh mongod --replSet rs0 --keyFile /etc/mongo-keyfile --bind_ip_all --wiredTigerCacheSizeGB 0.25
+  secrets:
+    - mongo_keyfile
+  restart: unless-stopped
+
+services:
+  mongo1:
+    <<: *mongo-member
+    hostname: mongo1
+    volumes:
+      - mongo1-data:/data/db
+      - ./mongo/replica-init.js:/scripts/replica-init.js:ro
+    environment:
+      MONGO_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:?Run "npm run setup:prod"}
+      MONGO_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:?Run "npm run setup:prod"}
+      MONGO_APP_USERNAME: ${MONGO_APP_USERNAME:?Run "npm run setup:prod"}
+      MONGO_APP_PASSWORD: ${MONGO_APP_PASSWORD:?Run "npm run setup:prod"}
+      MONGO_APP_DATABASE: ${MONGO_APP_DATABASE:-expression_detector}
+    depends_on:
+      mongo2:
+        condition: service_healthy
+      mongo3:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'mongosh',
+          '--quiet',
+          'mongodb://localhost:27017/?directConnection=true',
+          '/scripts/replica-init.js',
+        ]
+      interval: 5s
+      timeout: 30s
+      retries: 30
+      start_period: 10s
+
+  mongo2:
+    <<: *mongo-member
+    hostname: mongo2
+    volumes:
+      - mongo2-data:/data/db
+    healthcheck: &member-health # `hello` answers without authentication.
+      test: ['CMD', 'mongosh', '--quiet', '--eval', 'db.hello().ok']
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 5s
+
+  mongo3:
+    <<: *mongo-member
+    hostname: mongo3
+    volumes:
+      - mongo3-data:/data/db
+    healthcheck: *member-health
+
+  api:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    image: expression-detector-api
+    environment:
+      NODE_ENV: production
+      PORT: 5000
+      # All three members are listed so the driver can find the primary and fail over.
+      MONGO_URI: mongodb://${MONGO_APP_USERNAME}:${MONGO_APP_PASSWORD}@mongo1:27017,mongo2:27017,mongo3:27017/${MONGO_APP_DATABASE:-expression_detector}?replicaSet=rs0&authSource=${MONGO_APP_DATABASE:-expression_detector}
+      MONGO_MAX_POOL_SIZE: 20
+      REDIS_URL: redis://:${REDIS_PASSWORD:?Run "npm run setup:prod"}@redis:6379
+      CLIENT_URL: ${PUBLIC_URL:-https://localhost}
+      # Links in emails point here.
+      APP_URL: ${PUBLIC_URL:-https://localhost}
+      # Real email delivery (e.g. your provider's SMTP). Without SMTP_HOST, emails are
+      # not sent (and links are never logged in production).
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      MAIL_FROM: ${MAIL_FROM:-Expression Detector <no-reply@localhost>}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?Run "npm run setup:prod"}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?Run "npm run setup:prod"}
+      TRUST_PROXY_HOPS: 1
+      COOKIE_SECURE: 'true'
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_SERVICE_NAME: expression-api
+    deploy:
+      replicas: 3
+      resources:
+        limits:
+          memory: 256M
+    depends_on:
+      mongo1:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  redis:
+    image: redis:8-alpine
+    # Password-protected even on the private network (defence in depth); counters
+    # only, so no persistence.
+    command:
+      ['redis-server', '--requirepass', '${REDIS_PASSWORD}', '--save', '', '--appendonly', 'no']
+    healthcheck:
+      test: ['CMD-SHELL', 'redis-cli -a "$$REDIS_PASSWORD" --no-auth-warning ping | grep -q PONG']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    restart: unless-stopped
+
+  nginx:
+    build:
+      context: .
+      dockerfile: nginx/Dockerfile
+      args:
+        NGINX_CONF: nginx.prod.conf
+    image: expression-detector-web-prod
+    ports:
+      - '${HTTP_PORT:-80}:8080'
+      - '${HTTPS_PORT:-443}:8443'
+    volumes:
+      # Certificates are mounted at runtime, never baked into the image.
+      - ./nginx/certs:/etc/nginx/certs:ro
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:8081/nginx-health']
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+
+secrets:
+  mongo_keyfile:
+    file: ./secrets/mongo-keyfile
+
+volumes:
+  mongo1-data:
+  mongo2-data:
+  mongo3-data:

@@ -1,0 +1,158 @@
+# Local, production-like stack:
+#
+#   browser ──► nginx (static React app + reverse proxy, :8080)
+#                 └──► api × 2 (stateless Node/Express replicas, load-balanced)
+#                        ├──► mongo   (single-node replica set "rs0")
+#                        ├──► redis   (rate-limit counters shared by all replicas)
+#                        └──► mailpit (catches outgoing email; web inbox on :8025)
+#
+# Optional "observability" profile: Prometheus (:9090), Grafana (:3000), Jaeger (:16686).
+#
+# Usage:
+#   npm run setup:env          # once: creates .env with random JWT secrets
+#   docker compose up --build  # then open http://localhost:8080
+#   docker compose --profile observability up --build   # + metrics and tracing
+#
+# Secrets are read from .env (never written in this file).
+
+name: expression-detector
+
+services:
+  mongo:
+    image: mongo:8.0
+    # A one-node replica set: same connection semantics (and transactions/change
+    # streams) as production, at the cost of a single mongod process.
+    command: ['--replSet', 'rs0', '--bind_ip_all']
+    volumes:
+      - mongo-data:/data/db
+    # Exposed on the host's loopback only, so `npm run dev` can use it. It has no
+    # auth in this local setup — never publish it on a public interface.
+    ports:
+      - '127.0.0.1:${MONGO_HOST_PORT:-27017}:27017'
+    healthcheck:
+      # Initiates the replica set on first boot, then reports healthy once it is PRIMARY.
+      test:
+        - CMD
+        - mongosh
+        - --quiet
+        - --eval
+        - "try { rs.status().ok } catch (e) { rs.initiate({ _id: 'rs0', members: [{ _id: 0, host: 'mongo:27017' }] }).ok }"
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 10s
+    restart: unless-stopped
+
+  redis:
+    image: redis:8-alpine
+    # Counters only: nothing needs to survive a restart, so persistence is off.
+    command: ['redis-server', '--save', '', '--appendonly', 'no']
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  mailpit:
+    # A fake SMTP server with a web inbox: open http://localhost:8025 to read the
+    # verification / password-reset emails the app sends.
+    image: axllent/mailpit:latest
+    ports:
+      - '127.0.0.1:8025:8025'
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    image: expression-detector-api
+    environment:
+      NODE_ENV: production
+      PORT: 5000
+      MONGO_URI: mongodb://mongo:27017/expression_detector?replicaSet=rs0
+      REDIS_URL: redis://redis:6379
+      CLIENT_URL: http://localhost:8080
+      APP_URL: http://localhost:8080
+      SMTP_HOST: mailpit
+      SMTP_PORT: 1025
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?Run "npm run setup:env" to create .env}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?Run "npm run setup:env" to create .env}
+      ANONYMOUS_RETENTION_DAYS: ${ANONYMOUS_RETENTION_DAYS:-30}
+      RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-300}
+      # One proxy (Nginx) in front: trust exactly one X-Forwarded-For hop.
+      TRUST_PROXY_HOPS: 1
+      # Local stack runs on http://localhost, which browsers accept Secure cookies from.
+      COOKIE_SECURE: 'true'
+      # Tracing is off unless set (e.g. http://jaeger:4318 with the observability profile).
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_SERVICE_NAME: expression-api
+    deploy:
+      # Stateless instances (sessions are JWT cookies, data is in MongoDB, counters in
+      # Redis), so scaling out is just a number: `docker compose up --scale api=3`.
+      replicas: 2
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+    restart: unless-stopped
+
+  nginx:
+    build:
+      context: .
+      dockerfile: nginx/Dockerfile
+    image: expression-detector-web
+    ports:
+      - '8080:8080'
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:8080/']
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+
+  # ---------------- observability profile (optional) ----------------
+
+  prometheus:
+    profiles: ['observability']
+    image: prom/prometheus:latest
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - '127.0.0.1:9090:9090'
+    restart: unless-stopped
+
+  grafana:
+    profiles: ['observability']
+    image: grafana/grafana:latest
+    environment:
+      # Local-only convenience: anonymous read access, no login screen.
+      GF_AUTH_ANONYMOUS_ENABLED: 'true'
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_AUTH_DISABLE_LOGIN_FORM: 'true'
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - '127.0.0.1:3000:3000'
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+  jaeger:
+    profiles: ['observability']
+    # All-in-one: receives OpenTelemetry traces (OTLP on 4318) and shows them on :16686.
+    image: jaegertracing/jaeger:latest
+    ports:
+      - '127.0.0.1:16686:16686'
+    restart: unless-stopped
+
+volumes:
+  mongo-data:

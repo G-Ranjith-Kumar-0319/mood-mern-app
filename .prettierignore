@@ -1,0 +1,9 @@
+node_modules
+dist
+coverage
+package-lock.json
+client/public/models
+.claude
+e2e/playwright-report
+e2e/test-results
+e2e/.fixtures

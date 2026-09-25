@@ -1,0 +1,122 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A newer push to the same branch cancels the run in progress.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Lint, typecheck, test, build
+    runs-on: ubuntu-latest
+    env:
+      # Where mongodb-memory-server keeps its MongoDB binary (cached between runs).
+      MONGOMS_DOWNLOAD_DIR: ${{ github.workspace }}/.cache/mongodb-binaries
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Cache MongoDB binary for integration tests
+        uses: actions/cache@v6
+        with:
+          path: .cache/mongodb-binaries
+          key: mongodb-binaries-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - run: npm ci
+
+      - name: Formatting
+        run: npm run format:check
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Unit + integration tests
+        run: npm test
+
+      - name: Production build
+        run: npm run build
+
+  e2e:
+    name: End-to-end (Playwright, fake camera)
+    needs: quality
+    runs-on: ubuntu-latest
+    env:
+      MONGOMS_DOWNLOAD_DIR: ${{ github.workspace }}/.cache/mongodb-binaries
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Cache MongoDB binary
+        uses: actions/cache@v6
+        with:
+          path: .cache/mongodb-binaries
+          key: mongodb-binaries-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - run: npm ci
+
+      - name: Install Chromium for Playwright
+        run: npx -w e2e playwright install --with-deps chromium
+
+      - name: Run end-to-end tests
+        run: npm run test:e2e
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report
+          path: e2e/playwright-report
+          retention-days: 7
+
+  docker:
+    name: Docker build + smoke test
+    needs: quality
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Create .env with random secrets
+        run: npm run setup:env
+
+      - name: Build images and start the stack
+        run: docker compose up --build --detach --wait --wait-timeout 180
+
+      - name: Smoke test through Nginx
+        run: |
+          curl --fail --silent http://localhost:8080/api/v1/health/ready
+          curl --fail --silent --output /dev/null http://localhost:8080/
+          curl --fail --silent --output /dev/null http://localhost:8080/models/face_expression_model.bin
+          curl --fail --silent -X POST http://localhost:8080/api/v1/expressions \
+            -H 'Content-Type: application/json' \
+            -d "{\"expression\":\"happy\",\"confidence\":0.9,\"detectedAt\":\"$(date -u +%Y-%m-%dT%H:%M:%S.000Z)\"}"
+
+      - name: Logs on failure
+        if: failure()
+        run: docker compose logs --tail 100
+
+      - name: Tear down
+        if: always()
+        run: docker compose down --volumes
