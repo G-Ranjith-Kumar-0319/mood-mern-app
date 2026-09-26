@@ -26,17 +26,15 @@ services:
         value: '1'
       - key: LOG_LEVEL
         value: info
-      # Email (verification + password reset). Render's FREE tier blocks outbound SMTP on
-      # ports 25/465/587, so use a provider that accepts port 2525, e.g. Brevo (free, 300/day):
-      # SMTP_USER = the "Login" and SMTP_PASS = an "SMTP key" from Brevo → SMTP & API.
-      # MAIL_FROM must be a sender verified in Brevo, e.g. "Mood Detector <you@gmail.com>".
-      - key: SMTP_HOST
-        value: smtp-relay.brevo.com
-      - key: SMTP_PORT
-        value: '2525'
-      - key: SMTP_USER
+      # Email (verification + password reset) via the Gmail API over HTTPS. Render's free tier
+      # blocks outbound SMTP (25/465/587), so Gmail SMTP cannot work there; the API can.
+      # Create the values with `npm run gmail:token` (docs/deployment.md → Email).
+      # MAIL_FROM: "Mood Detector <the-same-address@gmail.com>".
+      - key: GMAIL_CLIENT_ID
         sync: false
-      - key: SMTP_PASS
+      - key: GMAIL_CLIENT_SECRET
+        sync: false
+      - key: GMAIL_REFRESH_TOKEN
         sync: false
       - key: MAIL_FROM
         sync: false

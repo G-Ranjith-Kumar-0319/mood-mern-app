@@ -65,6 +65,13 @@ const envSchema = z
     SMTP_USER: z.preprocess(emptyToUndefined, z.string().optional()),
     SMTP_PASS: z.preprocess(emptyToUndefined, z.string().optional()),
     MAIL_FROM: z.string().default('Expression Detector <no-reply@localhost>'),
+    /**
+     * Gmail API (HTTPS) instead of SMTP: works where SMTP ports are blocked (Render's free
+     * tier). Get the refresh token with `npm run gmail:token` (docs/deployment.md).
+     */
+    GMAIL_CLIENT_ID: z.preprocess(emptyToUndefined, z.string().optional()),
+    GMAIL_CLIENT_SECRET: z.preprocess(emptyToUndefined, z.string().optional()),
+    GMAIL_REFRESH_TOKEN: z.preprocess(emptyToUndefined, z.string().optional()),
     /** Optional: shared rate-limit counters across API instances (e.g. redis://redis:6379). */
     REDIS_URL: z.preprocess(emptyToUndefined, z.string().optional()),
     /** Days before anonymous detections are deleted automatically (0 = keep forever). */
@@ -84,6 +91,15 @@ const envSchema = z
     TURN_SHARED_SECRET: z.preprocess(emptyToUndefined, z.string().optional()),
   })
   .superRefine((env, ctx) => {
+    const gmailKeys = ['GMAIL_CLIENT_ID', 'GMAIL_CLIENT_SECRET', 'GMAIL_REFRESH_TOKEN'] as const;
+    const gmailSet = gmailKeys.filter((key) => env[key]);
+    if (gmailSet.length > 0 && gmailSet.length < gmailKeys.length) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['GMAIL_REFRESH_TOKEN'],
+        message: 'Set all of GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET and GMAIL_REFRESH_TOKEN, or none',
+      });
+    }
     if (env.TURN_SERVER && !env.TURN_SHARED_SECRET && !(env.TURN_USERNAME && env.TURN_CREDENTIAL)) {
       ctx.addIssue({
         code: 'custom',
@@ -166,6 +182,14 @@ function loadEnv() {
     clientDir: env.SERVE_CLIENT_DIR,
     mail: {
       from: env.MAIL_FROM,
+      gmail:
+        env.GMAIL_CLIENT_ID && env.GMAIL_CLIENT_SECRET && env.GMAIL_REFRESH_TOKEN
+          ? {
+              clientId: env.GMAIL_CLIENT_ID,
+              clientSecret: env.GMAIL_CLIENT_SECRET,
+              refreshToken: env.GMAIL_REFRESH_TOKEN,
+            }
+          : null,
       smtp: env.SMTP_HOST
         ? {
             host: env.SMTP_HOST,

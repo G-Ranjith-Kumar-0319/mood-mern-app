@@ -5,7 +5,13 @@ const EMAIL = { to: 'user@example.com', subject: 'Verify', text: 'link', html: '
 const SMTP = { host: 'smtp-relay.example.com', port: 2525, secure: false };
 
 /** The mailer picks its mode at import time, so each case loads it with its own config. */
-async function loadMailer(smtp: typeof SMTP | null, sendMail = vi.fn()) {
+const GMAIL = { clientId: 'id', clientSecret: 'secret', refreshToken: 'refresh' };
+
+async function loadMailer(
+  smtp: typeof SMTP | null,
+  sendMail = vi.fn(),
+  gmail: typeof GMAIL | null = null,
+) {
   vi.resetModules();
   const createTransport = vi.fn(() => ({ sendMail, verify: vi.fn() }));
   vi.doMock('nodemailer', () => ({ default: { createTransport } }));
@@ -13,7 +19,7 @@ async function loadMailer(smtp: typeof SMTP | null, sendMail = vi.fn()) {
     config: {
       isTest: false,
       isProduction: true,
-      mail: { from: 'App <no-reply@example.com>', smtp },
+      mail: { from: 'App <no-reply@example.com>', smtp, gmail },
     },
   }));
   vi.doMock('../../src/config/logger.js', () => ({
@@ -63,6 +69,25 @@ describe('mailer in production', () => {
     const error = await rejectionOf(mailer.send(EMAIL));
     expect(error.code).toBe('EMAIL_UNAVAILABLE');
     expect(error.message).not.toContain('535');
+  });
+
+  it('prefers the Gmail API (HTTPS) over SMTP when both are configured', async () => {
+    const { mailer, createTransport } = await loadMailer(SMTP, vi.fn(), GMAIL);
+    expect(mailer.mode).toBe('gmail');
+    expect(createTransport).not.toHaveBeenCalled();
+  });
+
+  it('turns a Gmail API failure into a client-safe 503', async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(new Response(JSON.stringify({ error: 'invalid_grant' }), { status: 400 })),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const { mailer } = await loadMailer(null, vi.fn(), GMAIL);
+
+    const error = await rejectionOf(mailer.send(EMAIL));
+    expect(error.code).toBe('EMAIL_UNAVAILABLE');
+    expect(error.message).not.toContain('invalid_grant');
+    vi.unstubAllGlobals();
   });
 
   it('sends through SMTP with the configured sender', async () => {

@@ -14,6 +14,7 @@
   "scripts": {
     "setup:env": "node scripts/setup-env.mjs",
     "setup:prod": "node scripts/setup-prod.mjs",
+    "gmail:token": "node scripts/gmail-token.mjs",
     "dev": "concurrently --kill-others-on-fail -n server,client -c blue,magenta \"npm run dev -w server\" \"npm run dev -w client\"",
     "dev:phone": "concurrently --kill-others-on-fail -n server,client -c blue,magenta \"npm run dev -w server\" \"npm run dev:phone -w client\"",
     "build": "npm run build -w server && npm run build -w client",

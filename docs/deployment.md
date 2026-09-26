@@ -138,17 +138,55 @@ Notes:
   networks, use a hosted TURN service and set `TURN_SERVER`, `TURN_USERNAME`, `TURN_CREDENTIAL`
   in the Render dashboard (redeploy). The API refuses to start if `TURN_SERVER` is set without
   credentials.
-- **Email**: Render's free tier blocks outbound SMTP on ports 25, 465 and 587 (Gmail SMTP will
-  time out). Use a provider that accepts **port 2525**, such as Brevo (free, 300 emails/day):
-  create an account, verify a sender address (_Senders, Domains & Dedicated IPs_), then under
-  _SMTP & API_ copy the SMTP **Login** and generate an **SMTP key**. In Render set
-  `SMTP_HOST=smtp-relay.brevo.com`, `SMTP_PORT=2525`, `SMTP_USER=<Login>`, `SMTP_PASS=<SMTP key>`,
-  `MAIL_FROM=Mood Detector <verified-sender@example.com>`. The log shows `SMTP ready` at startup
-  if it works. Without SMTP the app says "Sending email is not configured" instead of
-  pretending an email was sent.
+- **Email**: see [Email with Gmail](#email-with-gmail-free-works-on-render) below. Render's
+  free tier blocks outbound SMTP (ports 25/465/587), so Gmail SMTP times out there, but the
+  Gmail API (HTTPS) works.
 - Test the image locally the way Render runs it:
   `docker build -f render/Dockerfile -t expression-detector-render .` then
   `docker run -p 10000:10000 -e PORT=10000 -e MONGO_URI=… -e JWT_ACCESS_SECRET=… -e JWT_REFRESH_SECRET=… expression-detector-render`.
+
+## Email with Gmail (free, works on Render)
+
+The API can send verification and password-reset emails from your Gmail account through the
+**Gmail API over HTTPS** (`server/src/services/gmailApi.ts`). No SMTP port is involved, so it works
+on Render's free tier. Gmail allows roughly 500 emails/day from a personal account, and messages
+come from a real Gmail address, so they rarely land in spam. The app only gets the `gmail.send`
+permission: it can send mail as you, not read your mailbox.
+
+**1. Google Cloud (once, ~5 minutes)** at [console.cloud.google.com](https://console.cloud.google.com):
+
+1. Create a project (any name).
+2. _APIs & Services → Library_: search **Gmail API** → **Enable**.
+3. _APIs & Services → OAuth consent screen_ (Google Auth Platform): app name, your email as
+   support/developer contact, audience **External**. Add your Gmail address as a **test user**.
+4. **Publish the app** (_Audience → Publish app_ → "In production"). Otherwise Google expires the
+   refresh token after 7 days. Verification by Google is not needed for your own account; you
+   will just see an "unverified app" warning once.
+5. _Credentials → Create credentials → OAuth client ID_ → type **Desktop app**. Copy the
+   **Client ID** and **Client secret**.
+
+**2. Get the refresh token (on your laptop):**
+
+```bash
+# put GMAIL_CLIENT_ID=… and GMAIL_CLIENT_SECRET=… in the root .env, then:
+npm run gmail:token
+```
+
+Open the printed URL, sign in with the Gmail account that should send the emails, allow
+"Send email on your behalf". (On "Google hasn't verified this app": _Advanced → Go to … (unsafe)_,
+since it is your own app.) The terminal prints `GMAIL_REFRESH_TOKEN=…`.
+
+**3. Render** → your service → _Environment_: set `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`,
+`GMAIL_REFRESH_TOKEN` and `MAIL_FROM=Mood Detector <that-address@gmail.com>`, then _Save, rebuild,
+and deploy_. The log shows `Email ready` (via "Gmail API") at startup. If it shows
+`invalid_grant`, the refresh token was revoked or expired: run `npm run gmail:token` again.
+
+Treat the client secret and refresh token like passwords: only in Render/`.env`, never in Git. To
+revoke access: [myaccount.google.com/permissions](https://myaccount.google.com/permissions).
+
+Other options: any SMTP provider via `SMTP_*` (on Render's free tier it must accept port 2525,
+e.g. Mailjet `in-v3.mailjet.com` or SMTP2GO `mail.smtp2go.com`), or Gmail SMTP with an _app
+password_ (`smtp.gmail.com:465`) on hosts that allow SMTP.
 
 ## Going to a real cloud
 
