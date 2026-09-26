@@ -7,3 +7,6 @@ process.env.JWT_REFRESH_SECRET = 'test-refresh-secret-at-least-32-characters-lon
 process.env.RATE_LIMIT_MAX = '10000';
 process.env.AUTH_RATE_LIMIT_MAX = '10000';
 process.env.EMAIL_RATE_LIMIT_MAX = '10000';
+process.env.CAMERA_SESSION_RATE_LIMIT_MAX = '10000';
+// Tests must never depend on an external STUN server.
+process.env.STUN_SERVER = '';

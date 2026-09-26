@@ -61,7 +61,10 @@ App (TanStack Query · MUI theme + chart colour variables · BrowserRouter)
  └── AppLayout (nav · LiveIndicator (SSE) · UserMenu · OfflineBanner)
       ├── HomePage
       │    ├── PrivacyNotice · DetectorError
-      │    ├── CameraView ── FaceOverlay (all faces) · PerformanceReadout
+      │    ├── CameraSourceSelector (This device | Phone camera)
+      │    ├── Camera ── CameraSelector (desktop) · CameraView ── FaceOverlay · PerformanceReadout
+      │    ├── PhoneCameraConnector ── QRCodeDisplay · ConnectionStatus · CameraView (remote)
+      │    │         └── CameraControls (start · stop · switch) · CameraPermissionError
       │    ├── DetectorSettingsPanel
       │    ├── ExpressionResult ── ConfidenceIndicator
       │    ├── SaveControls · RecentDetections
@@ -71,20 +74,22 @@ App (TanStack Query · MUI theme + chart colour variables · BrowserRouter)
       ├── AccountPage (profile · retention · export · password · delete)
       ├── AuthPage (login / register) · VerifyEmail · ForgotPassword · ResetPassword
       └── NotFoundPage
+ PhoneCameraPage (/camera/:sessionId, outside the layout) ── Camera (useCamera, rear first)
 ```
 
 Components render; logic lives in hooks and pure utilities:
 
 | Module                                                                                             | Responsibility                                                                                       |
 | -------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `hooks/useCamera`                                                                                  | `getUserMedia` (video only), start/stop, permission errors, stops every track, ignores stale prompts |
+| `hooks/useCamera` → `services/camera.service`, `utils/camera.utils`                                | video-only stream, device list/selection, front/rear switch, plug/unplug, errors, one stream at most |
+| `hooks/usePhoneCamera` → `useCameraSession`, `useSignaling`, `useWebRTC` → `services/peerLink`     | phone camera: pairing session, Socket.IO signaling, WebRTC; remote stream feeds the same `<video>`   |
 | `hooks/useDetectorSettings`                                                                        | model input size, analyses/second, multi-face, Web Worker, performance readout (localStorage)        |
 | `hooks/useExpressionDetection`                                                                     | loads a backend, runs the frame loop, tracks faces, smooths, measures performance                    |
 | `services/detectorFactory` → `expressionDetector` / `workerExpressionDetector` + `detector.worker` | where inference runs (worker preferred, main-thread fallback)                                        |
 | `services/faceApiAnalysis`                                                                         | the only face-api calls, shared by both backends                                                     |
 | `utils/faceTracker`                                                                                | follows faces between frames (IoU matching), one smoother per face, sticky primary face              |
 | `utils/expressionSmoothing`                                                                        | adaptive sliding-window, confidence-weighted vote with hysteresis                                    |
-| `utils/detectorViewState`                                                                          | camera + model + detection → one of 10 UI states                                                     |
+| `utils/detectorViewState`                                                                          | camera + model + detection → one of 12 UI states                                                     |
 | `utils/detectionSegments` + `hooks/useAutoSave`                                                    | stable segments → saved events                                                                       |
 | `utils/sessionRecorder` + `hooks/useSessionSummary`                                                | time per expression in one session                                                                   |
 | `hooks/useLiveUpdates`                                                                             | EventSource subscription → refresh cached server data                                                |
@@ -196,6 +201,14 @@ Request → pino-http (request id, latency) → metrics histogram → helmet →
 `AppError` is an expected, client-safe error with a status and a stable `code`. `toAppError()` maps
 library errors (invalid JSON, oversized body, cast/validation errors, duplicate keys, database
 unavailable). Anything else becomes a generic 500; the stack trace goes to the log with the request id.
+
+### 4.3a Phone camera signaling
+
+Socket.IO shares the HTTP server (`realtime/cameraSignaling.ts`) and only relays WebRTC
+offer/answer/ICE messages between a laptop and a phone; media is peer-to-peer. Sessions are signed
+tokens (verifiable by any instance); live presence is in memory on the instance that Nginx routes
+the session to (`hash $arg_sessionId` on `/socket.io/`). Details:
+[phone-camera-webrtc.md](phone-camera-webrtc.md).
 
 ### 4.4 Statelessness and horizontal scaling
 

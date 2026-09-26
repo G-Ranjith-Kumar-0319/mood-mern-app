@@ -57,3 +57,11 @@ export const emailRateLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   limit: config.rateLimit.emailMax,
 });
+
+/** Pairing sessions are cheap but not free: a person needs a handful, not hundreds. */
+export const cameraSessionRateLimiter = rateLimit({
+  ...baseOptions,
+  ...storeFor('camera'),
+  windowMs: 15 * 60 * 1000,
+  limit: config.rateLimit.cameraSessionMax,
+});

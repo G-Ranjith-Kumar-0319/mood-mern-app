@@ -11,11 +11,14 @@ import { DashboardPage } from '../pages/Dashboard/DashboardPage';
 import { HistoryPage } from '../pages/History/HistoryPage';
 import { HomePage } from '../pages/Home/HomePage';
 import { NotFoundPage } from '../pages/NotFoundPage';
+import { PhoneCameraPage } from '../pages/PhoneCamera/PhoneCameraPage';
 
 /** Kept separate from <App> so tests can render routes inside a MemoryRouter. */
 export function AppRoutes() {
   return (
     <Routes>
+      {/* Opened on a phone from the QR code: no app chrome, no live-update stream. */}
+      <Route path="camera/:sessionId" element={<PhoneCameraPage />} />
       <Route element={<AppLayout />}>
         <Route index element={<HomePage />} />
         <Route path="history" element={<HistoryPage />} />

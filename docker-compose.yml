@@ -88,6 +88,15 @@ services:
       # Tracing is off unless set (e.g. http://jaeger:4318 with the observability profile).
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       OTEL_SERVICE_NAME: expression-api
+      # Phone camera (WebRTC). The API only relays signaling; video goes phone → laptop.
+      # TURN is needed when the two are on different/restrictive networks (docs/phone-camera-webrtc.md).
+      STUN_SERVER: ${STUN_SERVER-stun:stun.l.google.com:19302}
+      TURN_SERVER: ${TURN_SERVER:-}
+      TURN_USERNAME: ${TURN_USERNAME:-}
+      TURN_CREDENTIAL: ${TURN_CREDENTIAL:-}
+      TURN_SHARED_SECRET: ${TURN_SHARED_SECRET:-}
+      # Base URL encoded in the QR code (default: APP_URL, with localhost → this machine's LAN IP).
+      PHONE_CAMERA_URL: ${PHONE_CAMERA_URL:-}
     deploy:
       # Stateless instances (sessions are JWT cookies, data is in MongoDB, counters in
       # Redis), so scaling out is just a number: `docker compose up --scale api=3`.

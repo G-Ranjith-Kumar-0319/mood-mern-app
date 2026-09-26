@@ -41,6 +41,12 @@ per technology (React, Express, MongoDB, Docker, …), explaining every API this
 **Detection (in the browser)**
 
 - Start/stop the webcam (video only, never the microphone) with a visible _Camera on_ indicator.
+- **Choose the camera:** a _Camera source_ dropdown on desktop (integrated, USB, virtual cameras),
+  and a _Switch camera_ button for front/rear on phones. Plugging/unplugging a camera updates the
+  list; detection pauses during a switch and resumes on the new camera.
+- **Phone as a camera:** choose _Phone camera_, scan the QR code, press _Start camera_ on the phone.
+  Video streams phone → laptop over **WebRTC** (Socket.IO for signaling only) and runs through the
+  same detector. Guide: **[docs/phone-camera-webrtc.md](docs/phone-camera-webrtc.md)**.
 - Detects faces and classifies **7 visible expressions** (neutral, happy, sad, angry, fearful,
   disgusted, surprised). These are exactly the classes the model supports.
 - **Multi-face mode:** every face gets its own box, label and smoothing (faces are tracked between frames).
@@ -183,7 +189,12 @@ npm run build -w client      # production build (client/dist, with service worke
 npm run preview -w client    # serve the build locally
 ```
 
-The first _Start camera_ downloads the model (~1.8 MB, then cached). Camera access needs **HTTPS or localhost**.
+The first _Start camera_ downloads the model (~1.8 MB, then cached). Camera access needs a
+**secure context: HTTPS or `http://localhost`**. To test on a phone, open the app over HTTPS (e.g.
+the production compose stack, or a tunnel); a plain `http://192.168.x.x` address will not get
+camera access. Camera names appear after the first permission grant (before that, browsers hide them).
+To use a **phone as the camera** during development, run `npm run dev:phone` (HTTPS on your LAN;
+the QR code uses your laptop's LAN IP automatically).
 
 ## 8. Running the backend
 
@@ -225,11 +236,11 @@ npm test                # server (Supertest + in-memory MongoDB) + client (Vites
 npm run test:e2e        # Playwright: real Chromium, fake camera, production build
 ```
 
-| Suite      | Count | Highlights                                                                                                                                                                       |
-| ---------- | ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Server     | 107   | validation, auth & authorization, email tokens, retention/TTL, transactions, cursor pagination, trends across time zones, SSE owner isolation, metrics, `explain()` index checks |
-| Client     | 115   | camera lifecycle, smoothing/tracking, settings, pages, API client refresh, live updates, offline banner                                                                          |
-| End-to-end | 8     | face detection, multi-face in the Web Worker, session summary, no-face, cursor paging, live updates, dashboard, **offline detection**                                            |
+| Suite      | Count | Highlights                                                                                                                                                                                                    |
+| ---------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Server     | 132   | camera sessions & signaling, validation, auth & authorization, email tokens, retention/TTL, transactions, cursor pagination, trends across time zones, SSE owner isolation, metrics, `explain()` index checks |
+| Client     | 193   | camera lifecycle, selection & front/rear switching, phone camera (WebRTC, signaling, QR), smoothing/tracking, settings, pages, API client refresh, live updates, offline banner                               |
+| End-to-end | 9     | **phone camera over real WebRTC**, face detection, multi-face in the Web Worker, session summary, no-face, cursor paging, live updates, dashboard, **offline detection**                                      |
 
 Tests never touch a developer's database or real email.
 
@@ -243,12 +254,14 @@ docker compose -f docker-compose.prod.yml up --build -d   # https://localhost
 TLS + HSTS, 3 API replicas, a 3-member authenticated MongoDB replica set, and password-protected
 Redis. Primary failover, API-instance failure, live scaling, shared rate limiting, SSE over TLS and
 tracing were all verified. CI runs quality checks, E2E and a Docker smoke test on every push and PR.
+**Render (one free web service, public HTTPS, works with the phone camera):** `render.yaml` +
+MongoDB Atlas. Steps: [docs/deployment.md → Render](docs/deployment.md#render-single-service-free-tier).
 Details: **[docs/deployment.md](docs/deployment.md)**
 
 ## 13. Privacy considerations
 
 - Inference runs **in the browser**; no endpoint accepts images, and extra fields are rejected.
-- No microphone; visible camera indicator; all camera tracks stopped on stop/leave.
+- No microphone; visible camera indicator; all camera tracks stopped on stop/leave/switch (only one camera is ever open).
 - **Nothing is saved by default.** The session summary is never saved.
 - The service worker never caches API data.
 - Your data, your control: **retention**, **export**, **delete account**.
@@ -265,17 +278,22 @@ More: **[docs/security.md](docs/security.md)**
   need a MongoDB replica set.
 - Access tokens remain valid up to 15 minutes after revocation (stateless by design).
 - Offline detection needs one online session with the camera first (to cache the model).
+- Phone camera: production needs HTTPS and usually a TURN server; tested automatically in Chromium
+  only (real phones: manual checklist in docs/phone-camera-webrtc.md).
+- Front/rear detection relies on the browser's `facingMode` or common English camera labels;
+  camera switching has been unit-tested with mocked devices, not on every phone/browser.
 - `@vladmandic/face-api` was last published in early 2025; it's isolated behind one module
   ([ADR 0002](docs/decisions/0002-browser-inference-with-face-api.md)).
 
 ## 15. Documentation map
 
-| Document                                     | Contents                                                                                           |
-| -------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| [docs/learning/](docs/learning/)             | **Learning guides**: one per technology (`React-docs.md`, `Express-docs.md`, `MongoDB-docs.md`, …) |
-| [docs/architecture.md](docs/architecture.md) | How everything fits together                                                                       |
-| [docs/api.md](docs/api.md)                   | Every endpoint                                                                                     |
-| [docs/database.md](docs/database.md)         | Collections, indexes, retention, transactions, change streams                                      |
-| [docs/security.md](docs/security.md)         | Privacy, auth, hardening checklist                                                                 |
-| [docs/deployment.md](docs/deployment.md)     | Running, verification results, environment variables, CI                                           |
-| [docs/decisions/](docs/decisions/)           | 14 architecture decision records                                                                   |
+| Document                                                   | Contents                                                                                           |
+| ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| [docs/learning/](docs/learning/)                           | **Learning guides**: one per technology (`React-docs.md`, `Express-docs.md`, `MongoDB-docs.md`, …) |
+| [docs/architecture.md](docs/architecture.md)               | How everything fits together                                                                       |
+| [docs/api.md](docs/api.md)                                 | Every endpoint                                                                                     |
+| [docs/database.md](docs/database.md)                       | Collections, indexes, retention, transactions, change streams                                      |
+| [docs/security.md](docs/security.md)                       | Privacy, auth, hardening checklist                                                                 |
+| [docs/deployment.md](docs/deployment.md)                   | Running, verification results, environment variables, CI                                           |
+| [docs/phone-camera-webrtc.md](docs/phone-camera-webrtc.md) | Phone camera: WebRTC, signaling, STUN/TURN, setup, troubleshooting                                 |
+| [docs/decisions/](docs/decisions/)                         | 16 architecture decision records                                                                   |

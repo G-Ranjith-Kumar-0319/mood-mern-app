@@ -1,8 +1,13 @@
-import { screen, waitFor, within } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ExpressionDetector } from '../../services/expressionDetector';
-import { createFakeStream, mockGetUserMedia, removeMediaDevices } from '../../test/mediaMocks';
+import {
+  createFakeStream,
+  mockGetUserMedia,
+  mockMediaDevices,
+  removeMediaDevices,
+} from '../../test/mediaMocks';
 import { mockFetch, renderWithProviders } from '../../test/renderWithProviders';
 import { HomePage } from './HomePage';
 
@@ -76,6 +81,51 @@ describe('HomePage', () => {
     const alert = await screen.findByRole('alert');
     expect(within(alert).getByText('Camera permission needed')).toBeInTheDocument();
     expect(within(alert).getByRole('button', { name: 'Try again' })).toBeInTheDocument();
+  });
+
+  it('lets desktop users pick a camera source and switches the running camera', async () => {
+    const user = userEvent.setup();
+    const media = mockMediaDevices(
+      (constraints) => {
+        const video = constraints.video as MediaTrackConstraints;
+        const requested = (video.deviceId as ConstrainDOMStringParameters | undefined)?.exact;
+        const deviceId = typeof requested === 'string' ? requested : 'cam-a';
+        return Promise.resolve(createFakeStream({ deviceId }).stream);
+      },
+      [
+        { deviceId: 'cam-a', label: 'Integrated Webcam' },
+        { deviceId: 'cam-b', label: 'USB Webcam' },
+      ],
+    );
+    renderWithProviders(<HomePage />);
+
+    const selector = await screen.findByRole('combobox', { name: 'Camera source' });
+    expect(selector).toHaveTextContent('Integrated Webcam');
+    await user.click(screen.getByRole('button', { name: 'Start camera' }));
+    expect(await screen.findByText('Camera on')).toBeInTheDocument();
+
+    await user.click(selector);
+    await user.click(screen.getByRole('option', { name: 'USB Webcam' }));
+
+    await waitFor(() => expect(media.getUserMedia).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText('Camera on')).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Camera source' })).toHaveTextContent('USB Webcam');
+    expect(screen.getByRole('button', { name: 'Switch camera' })).toBeEnabled();
+  });
+
+  it('explains a disconnected camera', async () => {
+    const user = userEvent.setup();
+    const { stream, track } = createFakeStream();
+    mockGetUserMedia(() => Promise.resolve(stream));
+    renderWithProviders(<HomePage />);
+
+    await user.click(screen.getByRole('button', { name: 'Start camera' }));
+    await screen.findByText('Camera on');
+    act(() => track.end());
+
+    const alert = await screen.findByRole('alert');
+    expect(within(alert).getByText('Camera disconnected')).toBeInTheDocument();
+    expect(within(alert).getByText(/Please select another camera/)).toBeInTheDocument();
   });
 
   it('disables "Save now" until a confident expression is detected', async () => {

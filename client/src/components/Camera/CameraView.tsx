@@ -1,26 +1,37 @@
 import VideocamOffOutlinedIcon from '@mui/icons-material/VideocamOffOutlined';
-import { Box, Chip, Typography } from '@mui/material';
+import { Box, Chip, CircularProgress, Typography } from '@mui/material';
 import { useEffect, type ReactNode, type RefObject } from 'react';
 
 interface CameraViewProps {
+  /** Local camera or a phone's WebRTC stream — the <video> (and the detector) don't care which. */
   stream: MediaStream | null;
+  isActive: boolean;
+  isSwitching: boolean;
   videoRef: RefObject<HTMLVideoElement | null>;
+  /** Mirror like a selfie camera (front camera only — a rear camera is shown as-is). */
+  mirrored: boolean;
   /** Rendered on top of the video (e.g. the face bounding box). */
   overlay?: ReactNode;
 }
 
-/** Displays the webcam stream (mirrored, like a selfie camera) with a camera-active badge. */
-export function CameraView({ stream, videoRef, overlay }: CameraViewProps) {
-  const isActive = stream !== null;
-
+/**
+ * The video surface with a camera-active badge. `playsInline` stops iOS Safari
+ * from opening a fullscreen player; `muted` allows autoplay.
+ */
+export function CameraView({
+  stream,
+  isActive,
+  isSwitching,
+  videoRef,
+  mirrored,
+  overlay,
+}: CameraViewProps) {
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
     video.srcObject = stream;
-    if (stream) {
-      // play() can reject if the element is detached mid-call; the next render retries.
-      video.play().catch(() => undefined);
-    }
+    // play() can reject if the element is detached mid-call; the next stream change retries.
+    if (stream) video.play().catch(() => undefined);
   }, [stream, videoRef]);
 
   return (
@@ -45,7 +56,7 @@ export function CameraView({ stream, videoRef, overlay }: CameraViewProps) {
           width: '100%',
           height: '100%',
           objectFit: 'cover',
-          transform: 'scaleX(-1)',
+          transform: mirrored ? 'scaleX(-1)' : 'none',
           display: isActive ? 'block' : 'none',
         }}
       />
@@ -78,8 +89,12 @@ export function CameraView({ stream, videoRef, overlay }: CameraViewProps) {
             color: 'grey.400',
           }}
         >
-          <VideocamOffOutlinedIcon fontSize="large" aria-hidden />
-          <Typography>Camera is off</Typography>
+          {isSwitching ? (
+            <CircularProgress color="inherit" aria-hidden />
+          ) : (
+            <VideocamOffOutlinedIcon fontSize="large" aria-hidden />
+          )}
+          <Typography>{isSwitching ? 'Switching camera…' : 'Camera is off'}</Typography>
         </Box>
       )}
     </Box>

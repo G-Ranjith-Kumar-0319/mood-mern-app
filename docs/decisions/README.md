@@ -18,3 +18,5 @@ Short records of significant decisions: the context, the choice, and its consequ
 | [0012](0012-observability-metrics-and-tracing.md)      | Prometheus metrics and opt-in OpenTelemetry tracing                      |
 | [0013](0013-email-one-time-tokens.md)                  | Email verification and password reset with hashed one-time tokens        |
 | [0014](0014-hand-written-service-worker.md)            | A small hand-written service worker for offline use                      |
+| [0015](0015-camera-source-selection.md)                | Camera source selection and front/rear switching                         |
+| [0016](0016-phone-camera-webrtc.md)                    | Phone camera over WebRTC with Socket.IO signaling                        |

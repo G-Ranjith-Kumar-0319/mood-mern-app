@@ -25,6 +25,8 @@ development, Nginx in Docker/production), and authentication uses HttpOnly cooki
 | `POST /account/password`                                                              | required | Change password (signs out other devices)                    |
 | `GET /account/export`                                                                 | required | Download all your data (JSON file)                           |
 | `DELETE /account`                                                                     | required | Delete account and all data                                  |
+| `POST /camera/sessions`                                                               | —        | Phone-camera pairing session (QR code) for WebRTC            |
+| Socket.IO at `/socket.io` (no `/api` prefix)                                          | token    | WebRTC signaling for the phone camera                        |
 | `GET /metrics` (no `/api` prefix)                                                     | internal | Prometheus metrics; not reachable through Nginx              |
 
 ## Conventions
@@ -226,6 +228,14 @@ Rate limits: register/login/verify/reset/password-change/delete share the strict
   user, their detections and pending email tokens in one transaction, and clears the cookies.
 
 ---
+
+## Phone camera (WebRTC signaling)
+
+`POST /api/v1/camera/sessions` (no body, rate-limited) returns `sessionId`, `hostToken`,
+`phoneToken`, `cameraUrl` (token in the `#fragment`), `expiresAt` (10 min) and `iceServers`.
+The Socket.IO events, payloads, direction rules and error codes are documented in
+**[phone-camera-webrtc.md §4](phone-camera-webrtc.md#4-the-api-and-events)**. Video never
+passes through the API.
 
 ## `GET /metrics`
 

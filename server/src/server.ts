@@ -3,6 +3,7 @@ import { connectDatabase, disconnectDatabase } from './config/database.js';
 import { config } from './config/env.js';
 import { logger } from './config/logger.js';
 import { connectRedis, disconnectRedis } from './config/redis.js';
+import { attachCameraSignaling } from './realtime/cameraSignaling.js';
 import { liveUpdates } from './services/liveUpdates.js';
 
 /**
@@ -25,6 +26,8 @@ async function main(): Promise<void> {
   const server = app.listen(config.port, () => {
     logger.info({ port: config.port, env: config.nodeEnv }, 'API server listening');
   });
+  // WebRTC signaling (Socket.IO) shares the HTTP server, under /socket.io.
+  const cameraSignaling = attachCameraSignaling(server);
   server.keepAliveTimeout = KEEP_ALIVE_TIMEOUT_MS;
   server.headersTimeout = KEEP_ALIVE_TIMEOUT_MS + 1000;
 
@@ -41,8 +44,9 @@ async function main(): Promise<void> {
     }, SHUTDOWN_TIMEOUT_MS).unref();
 
     // Stop accepting new connections, let in-flight requests finish, then close MongoDB.
-    // Open event streams never "finish" on their own, so end them first.
+    // Open event streams and signaling sockets never "finish" on their own, so end them first.
     liveUpdates.endAllStreams();
+    cameraSignaling.stop();
     server.close(() => {
       liveUpdates
         .stop()
