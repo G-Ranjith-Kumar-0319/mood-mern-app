@@ -5,6 +5,7 @@ import { logger } from './config/logger.js';
 import { connectRedis, disconnectRedis } from './config/redis.js';
 import { attachCameraSignaling } from './realtime/cameraSignaling.js';
 import { liveUpdates } from './services/liveUpdates.js';
+import { mailer } from './services/mailer.js';
 
 /**
  * Must exceed the proxy's upstream keep-alive timeout (Nginx: 60 s) so Node
@@ -22,6 +23,8 @@ async function main(): Promise<void> {
   await connectDatabase();
   await connectRedis();
   await liveUpdates.start();
+  // Not awaited: a slow or unreachable SMTP server must not delay startup.
+  void mailer.verifyConnection();
 
   const server = app.listen(config.port, () => {
     logger.info({ port: config.port, env: config.nodeEnv }, 'API server listening');

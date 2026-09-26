@@ -26,6 +26,20 @@ services:
         value: '1'
       - key: LOG_LEVEL
         value: info
+      # Email (verification + password reset). Render's FREE tier blocks outbound SMTP on
+      # ports 25/465/587, so use a provider that accepts port 2525, e.g. Brevo (free, 300/day):
+      # SMTP_USER = the "Login" and SMTP_PASS = an "SMTP key" from Brevo → SMTP & API.
+      # MAIL_FROM must be a sender verified in Brevo, e.g. "Mood Detector <you@gmail.com>".
+      - key: SMTP_HOST
+        value: smtp-relay.brevo.com
+      - key: SMTP_PORT
+        value: '2525'
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: MAIL_FROM
+        sync: false
       # APP_URL / QR-code URL default to Render's RENDER_EXTERNAL_URL (https://<name>.onrender.com).
       # Optional TURN relay for phones on mobile data / other networks (set in the dashboard):
       - key: TURN_SERVER

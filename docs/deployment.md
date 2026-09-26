@@ -138,8 +138,14 @@ Notes:
   networks, use a hosted TURN service and set `TURN_SERVER`, `TURN_USERNAME`, `TURN_CREDENTIAL`
   in the Render dashboard (redeploy). The API refuses to start if `TURN_SERVER` is set without
   credentials.
-- Email is off unless you add `SMTP_*` variables. Signing up still works; verification emails
-  are not sent.
+- **Email**: Render's free tier blocks outbound SMTP on ports 25, 465 and 587 (Gmail SMTP will
+  time out). Use a provider that accepts **port 2525**, such as Brevo (free, 300 emails/day):
+  create an account, verify a sender address (_Senders, Domains & Dedicated IPs_), then under
+  _SMTP & API_ copy the SMTP **Login** and generate an **SMTP key**. In Render set
+  `SMTP_HOST=smtp-relay.brevo.com`, `SMTP_PORT=2525`, `SMTP_USER=<Login>`, `SMTP_PASS=<SMTP key>`,
+  `MAIL_FROM=Mood Detector <verified-sender@example.com>`. The log shows `SMTP ready` at startup
+  if it works. Without SMTP the app says "Sending email is not configured" instead of
+  pretending an email was sent.
 - Test the image locally the way Render runs it:
   `docker build -f render/Dockerfile -t expression-detector-render .` then
   `docker run -p 10000:10000 -e PORT=10000 -e MONGO_URI=… -e JWT_ACCESS_SECRET=… -e JWT_REFRESH_SECRET=… expression-detector-render`.

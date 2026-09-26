@@ -124,10 +124,17 @@ export const authService = {
    * exists, so the endpoint cannot be used to discover registered addresses.
    */
   async requestPasswordReset(email: string): Promise<void> {
+    // Checked before the lookup, so the answer is the same for known and unknown addresses.
+    mailer.assertConfigured();
     const user = await userRepository.findByEmail(email);
     if (!user) return;
     const token = await oneTimeTokenService.issue(user._id, 'reset-password');
-    await mailer.send(passwordResetEmail(user.email, token));
+    // A delivery failure is logged, not returned: it would reveal that the account exists.
+    await mailer
+      .send(passwordResetEmail(user.email, token))
+      .catch((error: unknown) =>
+        logger.error({ err: error }, 'Could not send password reset email'),
+      );
   },
 
   /** Sets a new password, signs out every existing session and returns a fresh one. */
