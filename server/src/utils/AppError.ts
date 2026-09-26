@@ -11,6 +11,7 @@ export type ErrorCode =
   | 'CONFLICT'
   | 'RATE_LIMITED'
   | 'DATABASE_UNAVAILABLE'
+  | 'EMAIL_UNAVAILABLE'
   | 'INTERNAL_ERROR';
 
 export interface ErrorDetail {

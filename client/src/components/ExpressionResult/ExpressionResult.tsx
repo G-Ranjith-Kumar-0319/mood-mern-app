@@ -26,6 +26,19 @@ function present(state: DetectorViewState): Presentation {
         hint: 'Allow camera access in the browser prompt.',
         busy: true,
       };
+    case 'switching-camera':
+      return {
+        emoji: null,
+        title: 'Switching camera…',
+        hint: 'Detection resumes when the new camera is ready.',
+        busy: true,
+      };
+    case 'waiting-for-phone':
+      return {
+        emoji: '📱',
+        title: 'Waiting for phone camera…',
+        hint: 'Scan the QR code, then press Start camera on the phone.',
+      };
     case 'loading-model':
       return {
         emoji: null,

@@ -72,6 +72,8 @@ export default defineConfig({
         CLIENT_URL: `http://localhost:${CLIENT_PORT}`,
         RATE_LIMIT_MAX: '10000',
         LOG_LEVEL: 'warn',
+        // Phone-camera test: both pages are on this machine, so no external STUN server.
+        STUN_SERVER: '',
       },
       timeout: 180_000,
       reuseExistingServer: !process.env.CI,

@@ -51,22 +51,63 @@ const envSchema = z
     RATE_LIMIT_MAX: z.coerce.number().int().positive().default(300),
     AUTH_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(10),
     EMAIL_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(5),
+    CAMERA_SESSION_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(30),
     TRUST_PROXY_HOPS: z.coerce.number().int().min(0).default(0),
 
-    /** Public base URL of the web app, used to build links in emails. */
-    APP_URL: z.url().default('http://localhost:5173'),
+    /** Public base URL of the web app (email links, phone-camera QR code). */
+    // Render sets RENDER_EXTERNAL_URL (https://<name>.onrender.com) on every web service.
+    APP_URL: z.url().default(process.env.RENDER_EXTERNAL_URL || 'http://localhost:5173'),
+    /** Serve the built React app from this directory (single-service hosting, e.g. Render). */
+    SERVE_CLIENT_DIR: z.preprocess(emptyToUndefined, z.string().optional()),
     SMTP_HOST: z.preprocess(emptyToUndefined, z.string().optional()),
     SMTP_PORT: z.coerce.number().int().min(1).max(65_535).default(1025),
     SMTP_SECURE: z.preprocess(emptyToUndefined, booleanString.optional()),
     SMTP_USER: z.preprocess(emptyToUndefined, z.string().optional()),
     SMTP_PASS: z.preprocess(emptyToUndefined, z.string().optional()),
     MAIL_FROM: z.string().default('Expression Detector <no-reply@localhost>'),
+    /**
+     * Gmail API (HTTPS) instead of SMTP: works where SMTP ports are blocked (Render's free
+     * tier). Get the refresh token with `npm run gmail:token` (docs/deployment.md).
+     */
+    GMAIL_CLIENT_ID: z.preprocess(emptyToUndefined, z.string().optional()),
+    GMAIL_CLIENT_SECRET: z.preprocess(emptyToUndefined, z.string().optional()),
+    GMAIL_REFRESH_TOKEN: z.preprocess(emptyToUndefined, z.string().optional()),
     /** Optional: shared rate-limit counters across API instances (e.g. redis://redis:6379). */
     REDIS_URL: z.preprocess(emptyToUndefined, z.string().optional()),
     /** Days before anonymous detections are deleted automatically (0 = keep forever). */
     ANONYMOUS_RETENTION_DAYS: z.coerce.number().int().min(0).max(3650).default(30),
+
+    /** Phone camera (WebRTC): how long a QR code / join link stays valid. */
+    CAMERA_SESSION_TTL_SECONDS: z.coerce.number().int().min(60).max(3600).default(600),
+    /** Base URL the phone opens (default: APP_URL, or the laptop's origin in development). */
+    PHONE_CAMERA_URL: z.preprocess(emptyToUndefined, z.url().optional()),
+    /** Comma-separated STUN URLs; empty = none (same-network connections still work). */
+    STUN_SERVER: z.string().default('stun:stun.l.google.com:19302'),
+    /** Comma-separated TURN URLs, e.g. "turn:turn.example.com:3478,turns:turn.example.com:5349". */
+    TURN_SERVER: z.preprocess(emptyToUndefined, z.string().optional()),
+    TURN_USERNAME: z.preprocess(emptyToUndefined, z.string().optional()),
+    TURN_CREDENTIAL: z.preprocess(emptyToUndefined, z.string().optional()),
+    /** coturn "use-auth-secret": issue short-lived TURN credentials instead of a static password. */
+    TURN_SHARED_SECRET: z.preprocess(emptyToUndefined, z.string().optional()),
   })
   .superRefine((env, ctx) => {
+    const gmailKeys = ['GMAIL_CLIENT_ID', 'GMAIL_CLIENT_SECRET', 'GMAIL_REFRESH_TOKEN'] as const;
+    const gmailSet = gmailKeys.filter((key) => env[key]);
+    if (gmailSet.length > 0 && gmailSet.length < gmailKeys.length) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['GMAIL_REFRESH_TOKEN'],
+        message: 'Set all of GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET and GMAIL_REFRESH_TOKEN, or none',
+      });
+    }
+    if (env.TURN_SERVER && !env.TURN_SHARED_SECRET && !(env.TURN_USERNAME && env.TURN_CREDENTIAL)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['TURN_SERVER'],
+        message: 'Set TURN_SHARED_SECRET, or both TURN_USERNAME and TURN_CREDENTIAL',
+      });
+    }
+
     if (env.NODE_ENV !== 'production') return;
 
     if (!env.MONGO_URI) {
@@ -95,6 +136,12 @@ const envSchema = z
     }
   });
 
+const splitList = (value: string) =>
+  value
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+
 function loadEnv() {
   const parsed = envSchema.safeParse(process.env);
   if (!parsed.success) {
@@ -113,9 +160,7 @@ function loadEnv() {
     isTest: env.NODE_ENV === 'test',
     port: env.PORT,
     mongo: { uri: env.MONGO_URI, maxPoolSize: env.MONGO_MAX_POOL_SIZE },
-    corsOrigins: env.CLIENT_URL.split(',')
-      .map((origin) => origin.trim())
-      .filter(Boolean),
+    corsOrigins: splitList(env.CLIENT_URL),
     logLevel: env.LOG_LEVEL,
     auth: {
       accessSecret: env.JWT_ACCESS_SECRET,
@@ -130,11 +175,21 @@ function loadEnv() {
       max: env.RATE_LIMIT_MAX,
       authMax: env.AUTH_RATE_LIMIT_MAX,
       emailMax: env.EMAIL_RATE_LIMIT_MAX,
+      cameraSessionMax: env.CAMERA_SESSION_RATE_LIMIT_MAX,
     },
     trustProxyHops: env.TRUST_PROXY_HOPS,
     appUrl: env.APP_URL.replace(/\/$/, ''),
+    clientDir: env.SERVE_CLIENT_DIR,
     mail: {
       from: env.MAIL_FROM,
+      gmail:
+        env.GMAIL_CLIENT_ID && env.GMAIL_CLIENT_SECRET && env.GMAIL_REFRESH_TOKEN
+          ? {
+              clientId: env.GMAIL_CLIENT_ID,
+              clientSecret: env.GMAIL_CLIENT_SECRET,
+              refreshToken: env.GMAIL_REFRESH_TOKEN,
+            }
+          : null,
       smtp: env.SMTP_HOST
         ? {
             host: env.SMTP_HOST,
@@ -145,6 +200,17 @@ function loadEnv() {
         : null,
     },
     redis: { url: env.REDIS_URL },
+    camera: {
+      sessionTtlSeconds: env.CAMERA_SESSION_TTL_SECONDS,
+      publicUrl: env.PHONE_CAMERA_URL?.replace(/\/$/, ''),
+    },
+    rtc: {
+      stunUrls: splitList(env.STUN_SERVER),
+      turnUrls: splitList(env.TURN_SERVER ?? ''),
+      turnUsername: env.TURN_USERNAME,
+      turnCredential: env.TURN_CREDENTIAL,
+      turnSharedSecret: env.TURN_SHARED_SECRET,
+    },
     retention: {
       anonymousDays: env.ANONYMOUS_RETENTION_DAYS === 0 ? null : env.ANONYMOUS_RETENTION_DAYS,
     },

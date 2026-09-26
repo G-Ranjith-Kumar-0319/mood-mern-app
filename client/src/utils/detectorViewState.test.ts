@@ -14,12 +14,18 @@ const ACTIVE: DetectorViewInput = {
 
 describe('getDetectorViewState', () => {
   it('is idle before the camera starts', () => {
-    expect(getDetectorViewState({ ...ACTIVE, cameraStatus: 'off' }).kind).toBe('idle');
+    expect(getDetectorViewState({ ...ACTIVE, cameraStatus: 'idle' }).kind).toBe('idle');
   });
 
   it('shows the permission prompt state', () => {
-    expect(getDetectorViewState({ ...ACTIVE, cameraStatus: 'requesting' }).kind).toBe(
+    expect(getDetectorViewState({ ...ACTIVE, cameraStatus: 'requesting-permission' }).kind).toBe(
       'requesting-camera',
+    );
+  });
+
+  it('hides the previous camera’s expression while switching cameras', () => {
+    expect(getDetectorViewState({ ...ACTIVE, cameraStatus: 'switching' }).kind).toBe(
+      'switching-camera',
     );
   });
 

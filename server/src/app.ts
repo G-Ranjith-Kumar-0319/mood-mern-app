@@ -7,6 +7,7 @@ import { config } from './config/env.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import { apiRateLimiter } from './middleware/rateLimit.js';
 import { requestLogger } from './middleware/requestLogger.js';
+import { serveClient } from './middleware/serveClient.js';
 import { metricsHandler, metricsMiddleware } from './observability/metrics.js';
 import { healthRouter } from './routes/health.routes.js';
 import { apiRouter } from './routes/index.js';
@@ -32,7 +33,30 @@ export function createApp(): Express {
 
   app.use(requestLogger);
   app.use(metricsMiddleware);
-  app.use(helmet());
+  // The same policy Nginx sends (nginx/snippets/security-headers.conf), so the app behaves
+  // identically when Node serves it directly (SERVE_CLIENT_DIR, e.g. on Render).
+  // blob:/data: are needed by TensorFlow.js workers and the camera preview.
+  app.use(
+    helmet({
+      contentSecurityPolicy: {
+        useDefaults: false,
+        directives: {
+          defaultSrc: ["'self'"],
+          scriptSrc: ["'self'"],
+          styleSrc: ["'self'", "'unsafe-inline'"],
+          imgSrc: ["'self'", 'data:', 'blob:'],
+          mediaSrc: ["'self'", 'blob:'],
+          connectSrc: ["'self'", 'data:', 'blob:'],
+          workerSrc: ["'self'", 'blob:'],
+          objectSrc: ["'none'"],
+          frameAncestors: ["'none'"],
+          baseUri: ["'self'"],
+          formAction: ["'self'"],
+        },
+      },
+      frameguard: { action: 'deny' },
+    }),
+  );
   app.use(cors({ origin: config.corsOrigins, credentials: true }));
   // Event streams must reach the browser immediately; compression would buffer them.
   app.use(
@@ -53,6 +77,8 @@ export function createApp(): Express {
   app.use('/api/v1/health', healthRouter);
   app.use('/api', apiRateLimiter);
   app.use('/api/v1', apiRouter);
+  // Single-service hosting: Node also serves the React build (Nginx does this in Docker Compose).
+  if (config.clientDir) app.use(serveClient(config.clientDir));
 
   app.use(notFoundHandler);
   app.use(errorHandler);
